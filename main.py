@@ -12,89 +12,18 @@ from datetime import datetime
 import base64
 import os
 from TranscriptSummarizer import TranscriptSummarizer
+from ConnectionManager import ConnectionManager
+from config import *
 
 
 app = FastAPI()
 templates = Jinja2Templates(directory="templates")
+app.mount("/static", StaticFiles(directory="static"), name="static")
 
-# AssemblyAI configuration
-API_KEY = "34ae749110fb4fddb650680f5c850f5c"
-CONNECTION_PARAMS = {
-    "sample_rate": 16000,
-    "speech_model": "u3-rt-pro",
-    "speaker_labels": True,
-    "max_speakers": 5
-}
 API_ENDPOINT_BASE_URL = "wss://streaming.assemblyai.com/v3/ws"
 API_ENDPOINT = f"{API_ENDPOINT_BASE_URL}?{urlencode(CONNECTION_PARAMS)}"
 
-SUMMARIZE_INTERVAL = 300
-
-
-# Store active connections
-class ConnectionManager:
-    def __init__(self):
-        self.active_connections: dict = {}  # client_id -> {client_ws, assembly_ws}
-        self.summarizer = TranscriptSummarizer()
-        self.summary_timers: dict = {}  # client_id -> timer
-        self.summaries = []
-
-    async def connect(self, client_id: str, client_ws: WebSocket):
-        await client_ws.accept()
-        self.active_connections[client_id] = {
-            "client_ws": client_ws,
-            "assembly_ws": None,
-            "audio_buffer": []
-        }
-
-    def disconnect(self, client_id: str):
-        if client_id in self.active_connections:
-            del self.active_connections[client_id]
-
-    async def send_message(self, client_id: str, message: str):
-        if client_id in self.active_connections:
-            await self.active_connections[client_id]["client_ws"].send_text(message)
-
-    def start_summary_thread(self, client_id: str, transcript_buffer: list):
-        """Start 5-minute periodic summarization"""
-
-        def summarize_periodically():
-            print("SUMMARIZING")
-            if client_id in self.active_connections:
-                # Get accumulated text
-                buffer_copy = transcript_buffer.copy()
-                if buffer_copy:
-                    text = "\n".join(buffer_copy)
-                    transcript_buffer.clear()
-
-                    # Generate summary
-                    summary = self.summarizer.summarize_with_deepseek(text)
-                    if summary != "N/A" and not summary.lower().startswith("N/A"):
-
-                        # Send to client
-                        asyncio.run(self.send_message(client_id, json.dumps({
-                            "type": "summary",
-                            "timestamp": datetime.now().isoformat(),
-                            "content": summary
-                        })))
-
-                        # Store in event log
-                        self.summaries.append({
-                            "time": datetime.now(),
-                            "summary": summary
-                        })
-
-            # Schedule next run
-            self.summary_timers[client_id] = threading.Timer(SUMMARIZE_INTERVAL, summarize_periodically)
-            self.summary_timers[client_id].start()
-
-        # Start the first timer
-        self.summary_timers[client_id] = threading.Timer(SUMMARIZE_INTERVAL, summarize_periodically)
-        self.summary_timers[client_id].start()
-
-
 manager = ConnectionManager()
-
 
 def create_assembly_connection(client_id: str):
     """Create a connection to AssemblyAI for a specific client"""

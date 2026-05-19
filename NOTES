@@ -1,0 +1,12 @@
+Data Pipeline - during session
+    1. *Raw* input -> Being recorded, and transcribed to *Transcription*
+    2. Transcription -> Every interval ( be it sentences, or seconds ), we look at our interval window of new text.
+        We then add this to our *Event Log* if anything happened - in the case of just quiet or chatter, don't add anything.
+        Note: This could probably use improvement later on, detecting awed silence or somesuch - actually no,
+        we don't want it to be that much of a court-recorder, we just want it to summarise events.
+
+Post-Session
+After the session is over, we have post-processing!
+    * This would be where we take the transcription, or we take the event log, and summarise it as well into a short breakdown
+    * We then also look at the event log, take out key characters or events, and add them to a more complex Mind Map.
+    * Mind map is updated / created from any previous sessions as well.
