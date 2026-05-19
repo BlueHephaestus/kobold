@@ -1,8 +1,9 @@
 import requests
+from secrets import *
 
 class TranscriptSummarizer:
     def __init__(self):
-        self.api_key = "sk-73ddf97ca85c4c26b32d12df1feee12f"
+        self.api_key = DEEPSEEK_API_KEY
         self.summaries = []  # Store summaries for event log
 
     def summarize_with_assemblyai(self, text: str) -> str:

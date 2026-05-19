@@ -14,6 +14,7 @@ import os
 from TranscriptSummarizer import TranscriptSummarizer
 from ConnectionManager import ConnectionManager
 from config import *
+from secrets import * # where api keys are defined
 
 
 app = FastAPI()
@@ -45,7 +46,7 @@ def create_assembly_connection(client_id: str):
     # Create WebSocket connection to AssemblyAI
     assembly_ws = websocket.WebSocketApp(
         API_ENDPOINT,
-        header={"Authorization": API_KEY},
+        header={"Authorization": ASSEMBLY_API_KEY},
         on_open=on_open,
         on_message=on_message,
         on_error=on_error,
