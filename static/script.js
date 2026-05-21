@@ -1,3 +1,6 @@
+// config constants
+const chunkSize = 800;
+const delayMs = 10; // small throttle
 
 let ws = null;
 let mediaRecorder = null;
@@ -13,6 +16,9 @@ function connect() {
         updateStatus('connected', 'Connected');
         document.getElementById('startMicBtn').disabled = false;
         document.querySelector('.file-label').style.opacity = '1';
+        // Pause button remains disabled until we've actually started microphone
+        document.getElementById('pauseBtn').disabled = true;
+
     };
 
     ws.onmessage = function(event) {
@@ -25,6 +31,8 @@ function connect() {
         } else if (data.type === 'Turn' || data.type === 'error') {
             // Send it back to the backend for summarization now that it's here
             if (ws && ws.readyState === WebSocket.OPEN) {
+                console.log(data);
+                console.log('Transcribed utterance:', data.utterance);
                 ws.send(JSON.stringify({
                     type: 'transcript',
                     text: data.utterance //|| extractTextFromWords(data.words)
@@ -41,6 +49,7 @@ function connect() {
     ws.onclose = function() {
         updateStatus('disconnected', 'Disconnected');
         document.getElementById('startMicBtn').disabled = true;
+        document.getElementById('pauseBtn').disabled = true;
         document.getElementById('stopBtn').disabled = true;
         if (mediaRecorder) {
             mediaRecorder.stop();
@@ -56,6 +65,7 @@ function handleAssemblyAIMessage(data) {
         displayUtterance(data);
     } else if (msgType === 'error') {
         console.error('AssemblyAI error:', data.error);
+        console.log(data);
         addSystemMessage('Error: ' + data.error);
     }
 }
@@ -97,7 +107,7 @@ function displayUtterance(data) {
                 speakerSpan.className = 'speaker';
                 speakerSpan.textContent = currentSpeaker + ': ';
                 utterance.appendChild(speakerSpan);
-                utterance.appendChild(document.createTextNode(currentText + '\\n'));
+                utterance.appendChild(document.createTextNode(currentText + '\n'));
                 currentText = '';
             }
             currentSpeaker = speaker;
@@ -142,8 +152,42 @@ function updateStatus(status, message) {
     statusDiv.textContent = message;
 }
 
+function togglePause() {
+    // Pause or resume sending audio frames
+    if (!audioContext) return;
+
+    const pauseBtn = document.getElementById('pauseBtn');
+
+    if (isRecording) {
+        // Pause: stop sending frames but keep stream/context alive
+        isRecording = false;
+        pauseBtn.textContent = 'Resume';
+        updateStatus('paused', 'Paused');
+        addSystemMessage('Transcription paused');
+    } else {
+        // Resume: restart sending frames
+        audioContext.resume().catch(() => {});
+        isRecording = true;
+        pauseBtn.textContent = 'Pause';
+        updateStatus('recording', 'Recording...');
+        addSystemMessage('Transcription resumed');
+    }
+}
+
 async function startMicrophone() {
     try {
+        // If an AudioContext already exists (paused), resume and reuse it
+        if (audioContext && audioContext.state !== 'closed') {
+            await audioContext.resume();
+            isRecording = true;
+            document.getElementById('startMicBtn').disabled = true;
+            document.getElementById('stopBtn').disabled = false;
+            document.getElementById('pauseBtn').disabled = false;
+            document.getElementById('pauseBtn').textContent = 'Pause';
+            updateStatus('recording', 'Recording...');
+            addSystemMessage('Microphone recording resumed');
+            return;
+        }
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
 
         // Create AudioContext for resampling to 16kHz
@@ -161,7 +205,7 @@ async function startMicrophone() {
             if (!isRecording) return;
 
             const inputData = e.inputBuffer.getChannelData(0);
-            // Convert float32 to int16
+            // Convert float32 to int16 (this is what assembly AI expects)
             const pcmData = new Int16Array(inputData.length);
             for (let i = 0; i < inputData.length; i++) {
                 pcmData[i] = Math.max(-32768, Math.min(32767, Math.floor(inputData[i] * 32767)));
@@ -181,6 +225,9 @@ async function startMicrophone() {
         isRecording = true;
 
         document.getElementById('startMicBtn').disabled = true;
+        document.getElementById('pauseBtn').disabled = false;
+        // document.getElementById('pauseBtn').textContent = 'Pause';
+
         document.getElementById('stopBtn').disabled = false;
         updateStatus('recording', 'Recording...');
         addSystemMessage('Microphone recording started');
@@ -197,7 +244,9 @@ function stopTranscription() {
     }
 
     if (audioContext) {
-        audioContext.close();
+        // Close the audio context to release resources
+        audioContext.close().catch(() => {});
+        audioContext = null;
     }
 
     isRecording = false;
@@ -208,6 +257,7 @@ function stopTranscription() {
     }
 
     document.getElementById('startMicBtn').disabled = false;
+    document.getElementById('pauseBtn').disabled = true;
     document.getElementById('stopBtn').disabled = true;
     updateStatus('connected', 'Connected');
     addSystemMessage('Transcription stopped');
@@ -218,30 +268,49 @@ async function uploadFile(file) {
 
     addSystemMessage(`Processing file: ${file.name}`);
 
-    // Read and send file as binary
+    // Read file as ArrayBuffer
     const reader = new FileReader();
     reader.onload = async function(e) {
         const arrayBuffer = e.target.result;
         const int16Array = new Int16Array(arrayBuffer);
 
-        // Send audio chunks
-        const chunkSize = 800; // 50ms at 16kHz
+        // Larger chunks reduce frame count; small delay prevents rapid-fire frames
+        // const chunkSize = document.hidden ? 3200 : 1600; // hidden: bigger chunks
+
+        const sleep = (ms) => new Promise(res => setTimeout(res, ms));
+
         for (let i = 0; i < int16Array.length; i += chunkSize) {
             const chunk = int16Array.slice(i, i + chunkSize);
             const base64Data = btoa(String.fromCharCode.apply(null, new Uint8Array(chunk.buffer)));
 
-            if (ws && ws.readyState === WebSocket.OPEN) {
-                ws.send(JSON.stringify({
-                    type: 'audio',
-                    data: base64Data
-                }));
+            // wait for socket to be open
+            const waitForOpen = async (timeout = 2000) => {
+                const start = Date.now();
+                while ((!ws || ws.readyState !== WebSocket.OPEN) && (Date.now() - start) < timeout) {
+                    await sleep(50);
+                }
+                return ws && ws.readyState === WebSocket.OPEN;
+            };
+
+            if (!(await waitForOpen())) {
+                addSystemMessage('WebSocket not open; aborting file upload');
+                break;
             }
 
-            // Simulate real-time
-            await new Promise(resolve => setTimeout(resolve, 50));
+            try {
+                ws.send(JSON.stringify({ type: 'audio', data: base64Data }));
+            } catch (err) {
+                console.error('Send error during uploadFile:', err);
+                addSystemMessage('Error sending audio chunk');
+                break;
+            }
+
+            // tiny throttle to avoid overwhelming AssemblyAI
+            // it will close the connection if this is too small
+            await sleep(delayMs);
         }
 
-        // Send termination
+        // Send termination if still connected
         if (ws && ws.readyState === WebSocket.OPEN) {
             ws.send(JSON.stringify({ type: 'terminate' }));
         }
@@ -259,5 +328,8 @@ connect();
 window.addEventListener('beforeunload', function() {
     if (ws) {
         ws.close();
+    }
+    if (audioContext) {
+        audioContext.close().catch(() => {});
     }
 });

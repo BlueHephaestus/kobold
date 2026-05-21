@@ -37,16 +37,19 @@ class ConnectionManager:
         """Start periodic summarization"""
 
         def summarize_periodically():
-            print("SUMMARIZING")
+            print(f"[{datetime.now().isoformat()}] Summarizing...")
             if client_id in self.active_connections:
                 # Get accumulated text
                 buffer_copy = transcript_buffer.copy()
                 if buffer_copy:
                     text = "\n".join(buffer_copy)
                     transcript_buffer.clear()
+                    # Print number of lines
+                    print(f"\tSummarizing {len(buffer_copy)} lines, {len(text)} characters")
 
                     # Generate summary
                     summary = self.summarizer.summarize_with_deepseek(text)
+                    print(f"\t=> {summary}")
                     if summary != "N/A" and not summary.lower().startswith("N/A"):
 
                         # Send to client

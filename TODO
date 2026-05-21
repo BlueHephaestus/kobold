@@ -12,6 +12,21 @@ DM / Player identification
     Can change the "roles" to be DM and all others as players to make it
     improve how it detects people, even if it's not doing individual identification
 
+Fix newlines in transcript - DONE
+Add DM / player into loading
+    doesn't work with streaming, it says
+    "You can pipe streaming transcripts into Speech Understanding post-call."
+    So maybe we do this on a thread after like 30 minutes of running the game?
+Really slow to process audio FILES - DONE
+    Only occurs when file, not when recording live.
+    But we can use AudioWorklet in the future if this is an issue.
+Summarization events happen on the backend but don't propagate to the frontend - DONE
+Include previous summaries in the new summarization so it's not batshit insane
+occasional send error still happening, need to fix or have it restart
+show audio file name when processing
+update the columns to have headers and be properly formatted
+Make each speaker have different color and not have it arbitrarily divided into paragraphs
+
 TITLE:
     Replication Steps:
     Symptoms:

@@ -5,15 +5,16 @@
     <link rel="stylesheet" href="/static/styles.css">
 </head>
 <body>
-
-    <h1>🎤 Real-time Speech Transcription</h1>
+    <h1> Kobold - A DM's Assistant (Prototype)</h1>
+    <h3>🎤 Real-time Speech Transcription</h3>
 
     <div class="controls">
         <div class="controls-section">
             <button id="startMicBtn" onclick="startMicrophone()">🎙️ Start Microphone</button>
+            <button id="pauseBtn" onclick="togglePause()" disabled>⏸️ Pause</button>
             <button id="stopBtn" onclick="stopTranscription()" disabled>⏹️ Stop</button>
             <input type="file" id="audioFile" accept="audio/wav" class="file-input" onchange="uploadFile(this.files[0])">
-            <label for="audioFile" class="file-label">📁 Upload Audio File</label>
+            <label for="audioFile" class="file-label">📁 Upload Audio File (DEBUG) </label>
         </div>
         <div id="status" class="status disconnected">Disconnected</div>
     </div>

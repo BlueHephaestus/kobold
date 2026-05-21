@@ -1,5 +1,5 @@
 import requests
-from secrets import *
+from apikeys import *
 
 class TranscriptSummarizer:
     def __init__(self):
@@ -21,6 +21,8 @@ class TranscriptSummarizer:
 
 Your responses are part of a software pipeline, so only respond with the summary, and nothing else. Do not include any formatting, just the summary text itself. 
 Say "N/A" if nothing important occurred, and ONLY "N/A".
+If the input is less than 100 words, keep your response less than 100 words.
+Inputs may have incorrect speech-to-text transcriptions. If it doesn't make sense, don't include it.
 Keep responses to an absolute minimum."""
 
         response = requests.post(

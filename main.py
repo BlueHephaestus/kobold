@@ -14,7 +14,7 @@ import os
 from TranscriptSummarizer import TranscriptSummarizer
 from ConnectionManager import ConnectionManager
 from config import *
-from secrets import * # where api keys are defined
+from apikeys import * # where api keys are defined
 
 
 app = FastAPI()
@@ -34,6 +34,7 @@ def create_assembly_connection(client_id: str):
 
     def on_message(ws, message):
         # Forward message from AssemblyAI to client
+        print(f"[Client {client_id}] AssemblyAI -> {message}")
         asyncio.run(manager.send_message(client_id, message))
 
     def on_error(ws, error):
@@ -41,7 +42,9 @@ def create_assembly_connection(client_id: str):
         asyncio.run(manager.send_message(client_id, json.dumps({"type": "error", "error": str(error)})))
 
     def on_close(ws, close_status_code, close_msg):
-        print(f"[Client {client_id}] AssemblyAI connection closed")
+        print(f"[Client {client_id}] AssemblyAI connection closed: code={close_status_code}, msg={close_msg}")
+
+
 
     # Create WebSocket connection to AssemblyAI
     assembly_ws = websocket.WebSocketApp(
@@ -77,7 +80,7 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str):
 
     try:
         while True:
-            # Receive audio data from client
+            # Receive audio data from client (despite the name)
             data = await websocket.receive_text()
 
             try:
@@ -120,7 +123,6 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str):
 async def get(request: Request):
     # return HTMLResponse(content=HTML_PAGE)
     return templates.TemplateResponse(request=request, name="index.html")
-    return
 
 if __name__ == "__main__":
     import uvicorn
