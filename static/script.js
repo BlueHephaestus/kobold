@@ -6,6 +6,9 @@ const sampleRate = 16000; // 16kHz
 //delayMs = chunkSize / sampleRate, since in real time, sampleRate * ms duration = # of frames
 //e.g. 0.05s (50ms) of 16000Hz is 800 frames. So we can algebra to get another formula.
 
+let utteranceCounter = 0; // increments for each appended utterance (used as a stable sequence)
+const speakerRenames = {}; // { speakerKey: [{ from: number, name: string }, ...] }
+
 let ws = null;
 let mediaRecorder = null;
 let audioContext = null;
@@ -87,6 +90,18 @@ function addToEventLog(timestamp, summary) {
     logDiv.insertBefore(entry, logDiv.firstChild);
 }
 
+// helper: return display name for a speakerKey at a given utterance index
+function getDisplayName(speakerKey, index) {
+    const list = speakerRenames[speakerKey];
+    if (!list || list.length === 0) return speakerKey;
+    // find the last rename whose from <= index
+    let chosen = speakerKey;
+    for (let i = 0; i < list.length; i++) {
+        if (list[i].from <= index) chosen = list[i].name;
+        else break;
+    }
+    return chosen;
+}
 
 function displayUtterance(data) {
     const transcriptDiv = document.getElementById('transcript');
@@ -96,48 +111,61 @@ function displayUtterance(data) {
         transcriptDiv.innerHTML = '';
     }
 
-    // Build utterance text with speaker labels
-    let utterance = document.createElement('div');
-    utterance.className = 'utterance';
-
-    let currentSpeaker = '';
-    let currentText = '';
+    // Build utterance element (container)
+    let utteranceEl = document.createElement('div');
+    utteranceEl.className = 'utterance';
+    // this utterance's stable index
+    const thisIndex = utteranceCounter;
 
     if (data.words) {
+        // group words by speaker inside this utterance container
+        let currentSpeakerKey = '';
+        let currentText = '';
+
         for (let word of data.words) {
-            const speaker = word.speaker ? `Speaker ${word.speaker}` : 'Unknown';
-            if (speaker !== currentSpeaker && currentSpeaker !== '') {
-                // Add previous speaker's text
+            const speakerKey = word.speaker ? `Speaker ${word.speaker}` : 'Unknown';
+            if (speakerKey !== currentSpeakerKey && currentSpeakerKey !== '') {
+                // flush previous speaker block
                 const speakerSpan = document.createElement('span');
                 speakerSpan.className = 'speaker';
-                speakerSpan.textContent = currentSpeaker + ': ';
-                utterance.appendChild(speakerSpan);
-                utterance.appendChild(document.createTextNode(currentText + '\n'));
+                speakerSpan.dataset.speakerKey = currentSpeakerKey;
+                speakerSpan.dataset.utteranceIndex = String(thisIndex);
+                speakerSpan.textContent = getDisplayName(currentSpeakerKey, thisIndex) + ': ';
+                utteranceEl.appendChild(speakerSpan);
+                utteranceEl.appendChild(document.createTextNode(currentText + '\n'));
                 currentText = '';
             }
-            currentSpeaker = speaker;
+            currentSpeakerKey = speakerKey;
             currentText += (currentText ? ' ' : '') + word.text;
         }
 
-        // Add last speaker's text
+        // flush last speaker block
         if (currentText) {
             const speakerSpan = document.createElement('span');
             speakerSpan.className = 'speaker';
-            speakerSpan.textContent = currentSpeaker + ': ';
-            utterance.appendChild(speakerSpan);
-            utterance.appendChild(document.createTextNode(currentText));
+            speakerSpan.dataset.speakerKey = currentSpeakerKey;
+            speakerSpan.dataset.utteranceIndex = String(thisIndex);
+            speakerSpan.textContent = getDisplayName(currentSpeakerKey, thisIndex) + ': ';
+            utteranceEl.appendChild(speakerSpan);
+            utteranceEl.appendChild(document.createTextNode(currentText));
         }
     } else if (data.utterance) {
-        const speaker = data.speaker_label ? `Speaker ${data.speaker_label}` : 'Unknown';
+        const speakerKey = data.speaker_label ? `Speaker ${data.speaker_label}` : 'Unknown';
         const speakerSpan = document.createElement('span');
         speakerSpan.className = 'speaker';
-        speakerSpan.textContent = speaker + ': ';
-        utterance.appendChild(speakerSpan);
-        utterance.appendChild(document.createTextNode(data.utterance));
+        speakerSpan.dataset.speakerKey = speakerKey;
+        speakerSpan.dataset.utteranceIndex = String(thisIndex);
+        speakerSpan.textContent = getDisplayName(speakerKey, thisIndex) + ': ';
+        utteranceEl.appendChild(speakerSpan);
+        utteranceEl.appendChild(document.createTextNode(data.utterance));
     }
 
-    transcriptDiv.appendChild(utterance);
+    // Append and scroll
+    transcriptDiv.appendChild(utteranceEl);
     transcriptDiv.scrollTop = transcriptDiv.scrollHeight;
+
+    // increment for the next utterance
+    utteranceCounter++;
 }
 
 function addSystemMessage(message) {
@@ -378,6 +406,88 @@ async function uploadFile(file) {
 
     reader.readAsArrayBuffer(file);
 }
+
+document.getElementById('transcript').addEventListener('dblclick', function (ev) {
+    const target = ev.target;
+    if (!target || !target.classList || !target.classList.contains('speaker')) return;
+
+    ev.preventDefault();
+    const span = target;
+    const speakerKey = span.dataset.speakerKey || span.textContent.replace(/:\s*$/, '').trim();
+    const utterIdx = parseInt(span.dataset.utteranceIndex || '0', 10);
+
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.className = 'speaker-edit';
+    input.value = span.textContent.replace(/:\s*$/, '').trim();
+    input.style.minWidth = '40px';
+    input.style.fontWeight = 'bold';
+
+    // replace span with input and focus
+    span.replaceWith(input);
+    input.focus();
+    input.select();
+
+    // prevent double-commit from multiple events (keydown + blur)
+    let committed = false;
+
+    function commit(confirmed) {
+        if (committed) return;
+        committed = true;
+
+        const newName = (input.value || '').trim();
+        const newSpan = document.createElement('span');
+        newSpan.className = 'speaker';
+        newSpan.dataset.speakerKey = speakerKey;
+        newSpan.dataset.utteranceIndex = String(utterIdx);
+
+        if (confirmed && newName && newName !== span.textContent.replace(/:\s*$/, '').trim()) {
+            if (!speakerRenames[speakerKey]) speakerRenames[speakerKey] = [];
+            speakerRenames[speakerKey].push({ from: utterIdx, name: newName });
+            speakerRenames[speakerKey].sort((a, b) => a.from - b.from);
+
+            newSpan.textContent = newName + ': ';
+
+            // Update existing speaker spans from this index onward
+            const allSpans = document.querySelectorAll('#transcript .speaker');
+            allSpans.forEach(s => {
+                if (s.dataset.speakerKey === speakerKey) {
+                    const idx = parseInt(s.dataset.utteranceIndex || '0', 10);
+                    if (idx >= utterIdx) {
+                        s.textContent = newName + ': ';
+                    }
+                }
+            });
+        } else {
+            const display = getDisplayName(speakerKey, utterIdx);
+            newSpan.textContent = display + ': ';
+        }
+
+        // Safely replace the input only if it's still in the DOM; otherwise try a sensible fallback
+        try {
+            if (input.isConnected) {
+                input.replaceWith(newSpan);
+            } else {
+                // try to find the original location to replace, else append
+                const selector = `#transcript .speaker[data-speaker-key="${CSS.escape(speakerKey)}"][data-utterance-index="${utterIdx}"]`;
+                const existing = document.querySelector(selector);
+                if (existing && existing.isConnected) existing.replaceWith(newSpan);
+                else document.getElementById('transcript').appendChild(newSpan);
+            }
+        } catch (err) {
+            console.warn('Safe replace failed:', err);
+            if (!newSpan.isConnected) document.getElementById('transcript').appendChild(newSpan);
+        }
+    }
+
+    input.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter') commit(true);
+        else if (e.key === 'Escape') commit(false);
+    });
+    input.addEventListener('blur', function () {
+        commit(true);
+    });
+});
 
 // Initialize connection
 connect();
