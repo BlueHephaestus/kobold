@@ -21,17 +21,32 @@ Really slow to process audio FILES - DONE
     Only occurs when file, not when recording live.
     But we can use AudioWorklet in the future if this is an issue.
 Summarization events happen on the backend but don't propagate to the frontend - DONE
-Include previous summaries in the new summarization so it's not batshit insane
+Include previous summaries in the new summarization so it's not batshit insane - DONE
 occasional send error still happening, need to fix or have it restart
 show audio file name when processing
 update the columns to have headers and be properly formatted
 Make each speaker have different color and not have it arbitrarily divided into paragraphs
+Remove 'mediaRecorder'?
+Add keyterms_prompt for names of speakers?
+    Problem here is this has to be added before websocket initialization
+    Considering that this also might not improve it much - there are many NPCs and no guarantee
+    that the speaker names input on the frontend will even be the same as the character names, or might be abbreviated,
+    I think this is a not-add-until-desired.
 
-TITLE:
-    Replication Steps:
+
+
+TITLE: Backend Websocket Termination Error
+    Replication Steps: Run the code for a while and then don't be tabbed into the tab, run the code and be looking at the tab.
     Symptoms:
     Remediation / Fixes:
     Notes:
+        [Client client_1779914821156_k1rmei5hp] AssemblyAI -> {"type":"Error","error_code":3007,"error":"Input Duration Error: Audio Transmission Rate Exceeded: Received 805.6 sec. audio in 1788.661411 sec"}
+        [Client client_1779917431137_gcrxwqpey] AssemblyAI -> {"type":"Error","error_code":3007,"error":"Input Duration Error: Audio Transmission Rate Exceeded: Received 382.0 sec. audio in 64.565582 sec"}
+        This occurs when too little, or too much, audio is given in a timeframe.
+        So basically, AssemblyAI doesn't like our debug mode where we try to speed process a file.
+        Might be only able to fix this by adding the right delay options. And then,
+        also fix how it backgrounds our audio process and improve that by switching to audio worklet.
+
 
 TITLE:
     Replication Steps:

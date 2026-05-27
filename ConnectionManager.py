@@ -47,10 +47,9 @@ class ConnectionManager:
                     # Print number of lines
                     print(f"\tSummarizing {len(buffer_copy)} lines, {len(text)} characters")
 
-                    # Generate summary
-                    summary = self.summarizer.summarize_with_deepseek(text)
-                    print(f"\t=> {summary}")
-                    if summary != "N/A" and not summary.lower().startswith("N/A"):
+                    # Generate summary (if sufficient info happened)
+                    has_summary, summary = self.summarizer.summarize_with_deepseek(text)
+                    if has_summary:
 
                         # Send to client
                         asyncio.run(self.send_message(client_id, json.dumps({
@@ -59,11 +58,6 @@ class ConnectionManager:
                             "content": summary
                         })))
 
-                        # Store in event log
-                        self.summaries.append({
-                            "time": datetime.now(),
-                            "summary": summary
-                        })
 
             # Schedule next run
             self.summary_timers[client_id] = threading.Timer(SUMMARIZE_INTERVAL, summarize_periodically)

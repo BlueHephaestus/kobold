@@ -32,3 +32,4 @@ CONNECTION_PARAMS = {
 #     })
 # Summarization Configuration
 SUMMARIZE_INTERVAL = 300
+SUMMARIZE_RECENT_SUMMARIES = 5
