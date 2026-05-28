@@ -14,6 +14,7 @@ let mediaRecorder = null;
 let audioContext = null;
 let audioWorkletNode = null;
 let isRecording = false;
+let wakeLock = null;
 let clientId = 'client_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
 
 // Connect WebSocket
@@ -29,26 +30,19 @@ function connect() {
 
     };
 
+    // Updated websocket message handler: don't send raw transcript immediately here.
+    // Formatted text will be sent after rendering in handleAssemblyAIMessage.
     ws.onmessage = function(event) {
         const data = JSON.parse(event.data);
-        // Handle summary messages
         if (data.type === 'summary') {
             console.log('Summary received:', data.content);
             addToEventLog(data.timestamp, data.content);
-            // Handle AssemblyAI Messages
         } else if (data.type === 'Turn' || data.type === 'error') {
-            // Send it back to the backend for summarization now that it's here
-            if (ws && ws.readyState === WebSocket.OPEN) {
-                console.log(data);
-                console.log('Transcribed utterance:', data.utterance);
-                ws.send(JSON.stringify({
-                    type: 'transcript',
-                    text: data.utterance //|| extractTextFromWords(data.words)
-                }));
-            }
+            // Let the handler decide when to send the formatted transcript (after rendering)
             handleAssemblyAIMessage(data);
         }
     };
+
     ws.onerror = function(error) {
         console.error('WebSocket error:', error);
         updateStatus('disconnected', 'Connection Error');
@@ -65,12 +59,83 @@ function connect() {
     };
 }
 
+async function acquireWakeLock() {
+    if (!('wakeLock' in navigator)) return;
+    try {
+        wakeLock = await navigator.wakeLock.request('screen');
+        wakeLock.addEventListener('release', () => { wakeLock = null; });
+        console.log('Wake lock acquired');
+    } catch (err) {
+        console.warn('Wake lock failed:', err);
+    }
+}
+
+async function releaseWakeLock() {
+    if (!wakeLock) return;
+    try {
+        await wakeLock.release();
+    } catch (e) {}
+    wakeLock = null;
+    console.log('Wake lock released');
+}
+
+// Build formatted "Speaker X: text\nSpeaker Y: ..." string using the same grouping logic as displayUtterance
+function formatTurnAsText(data, utteranceIndex) {
+    const lines = [];
+
+    if (data.words) {
+        let currentSpeakerKey = '';
+        let currentText = '';
+
+        for (let word of data.words) {
+            const speakerKey = word.speaker ? `Speaker ${word.speaker}` : 'Unknown';
+            if (speakerKey !== currentSpeakerKey && currentSpeakerKey !== '') {
+                const displayName = getDisplayName(currentSpeakerKey, utteranceIndex);
+                lines.push(`${displayName}: ${currentText}`);
+                currentText = '';
+            }
+            currentSpeakerKey = speakerKey;
+            currentText += (currentText ? ' ' : '') + word.text;
+        }
+
+        if (currentText) {
+            const displayName = getDisplayName(currentSpeakerKey, utteranceIndex);
+            lines.push(`${displayName}: ${currentText}`);
+        }
+    } else if (data.utterance) {
+        const speakerKey = data.speaker_label ? `Speaker ${data.speaker_label}` : 'Unknown';
+        const displayName = getDisplayName(speakerKey, utteranceIndex);
+        lines.push(`${displayName}: ${data.utterance}`);
+    }
+
+    return lines.join('\n');
+}
+
+
+// render then send formatted transcript using the same utterance index
 function handleAssemblyAIMessage(data) {
     const msgType = data.type;
 
     if (msgType === 'Turn' && data.end_of_turn) {
-        // Display the transcribed utterance
+        // capture the index that displayUtterance will use for this utterance
+        const thisIndex = utteranceCounter;
+        // render to the transcript area (this increments utteranceCounter)
         displayUtterance(data);
+
+        // format the rendered utterance text using the same index so renames align
+        const formattedText = formatTurnAsText(data, thisIndex);
+
+        // send formatted transcript to backend for summarization/storage
+        if (ws && ws.readyState === WebSocket.OPEN) {
+            try {
+                ws.send(JSON.stringify({
+                    type: 'transcript',
+                    text: formattedText
+                }));
+            } catch (err) {
+                console.error('Error sending formatted transcript:', err);
+            }
+        }
     } else if (msgType === 'error') {
         console.error('AssemblyAI error:', data.error);
         console.log(data);
@@ -216,6 +281,8 @@ async function startMicrophone() {
             await audioContext.resume();
             if (audioWorkletNode) audioWorkletNode.port.postMessage({ type: 'enabled', enabled: true });
             isRecording = true;
+            // request wake lock to reduce throttling
+            acquireWakeLock();
             document.getElementById('startMicBtn').disabled = true;
             document.getElementById('stopBtn').disabled = false;
             document.getElementById('pauseBtn').disabled = false;
@@ -337,6 +404,7 @@ function stopTranscription() {
     }
 
     isRecording = false;
+    releaseWakeLock();
 
     // Send termination message
     if (ws && ws.readyState === WebSocket.OPEN) {
@@ -442,23 +510,22 @@ document.getElementById('transcript').addEventListener('dblclick', function (ev)
         newSpan.dataset.utteranceIndex = String(utterIdx);
 
         if (confirmed && newName && newName !== span.textContent.replace(/:\s*$/, '').trim()) {
+            // Record a global rename starting at 0 so earlier instances also display the new name
             if (!speakerRenames[speakerKey]) speakerRenames[speakerKey] = [];
-            speakerRenames[speakerKey].push({ from: utterIdx, name: newName });
+            speakerRenames[speakerKey].push({ from: 0, name: newName });
             speakerRenames[speakerKey].sort((a, b) => a.from - b.from);
 
             newSpan.textContent = newName + ': ';
 
-            // Update existing speaker spans from this index onward
+            // Update ALL existing speaker spans for this speakerKey (earlier and later)
             const allSpans = document.querySelectorAll('#transcript .speaker');
             allSpans.forEach(s => {
                 if (s.dataset.speakerKey === speakerKey) {
-                    const idx = parseInt(s.dataset.utteranceIndex || '0', 10);
-                    if (idx >= utterIdx) {
-                        s.textContent = newName + ': ';
-                    }
+                    s.textContent = newName + ': ';
                 }
             });
         } else {
+            // cancelled or empty -> revert to previous display name for this index
             const display = getDisplayName(speakerKey, utterIdx);
             newSpan.textContent = display + ': ';
         }
@@ -468,7 +535,6 @@ document.getElementById('transcript').addEventListener('dblclick', function (ev)
             if (input.isConnected) {
                 input.replaceWith(newSpan);
             } else {
-                // try to find the original location to replace, else append
                 const selector = `#transcript .speaker[data-speaker-key="${CSS.escape(speakerKey)}"][data-utterance-index="${utterIdx}"]`;
                 const existing = document.querySelector(selector);
                 if (existing && existing.isConnected) existing.replaceWith(newSpan);
@@ -489,15 +555,42 @@ document.getElementById('transcript').addEventListener('dblclick', function (ev)
     });
 });
 
+// Resume audio & re-enable worklet on visibility change
+document.addEventListener('visibilitychange', async () => {
+    if (document.visibilityState === 'visible') {
+        // try to resume audio context and re-enable worklet
+        if (audioContext && audioContext.state === 'suspended') {
+            await audioContext.resume().catch(() => {});
+        }
+        if (audioWorkletNode) {
+            audioWorkletNode.port.postMessage({ type: 'enabled', enabled: true });
+            isRecording = true;
+        }
+        // re-acquire wake lock if recording
+        if (isRecording) await acquireWakeLock();
+    } else {
+        // When hidden, try to keep worklet running but release heavy UI ops.
+        // We avoid releasing the wake lock here (some browsers only allow request when visible)
+        // but we do stop fancy DOM work by pruning.
+        if (audioWorkletNode){
+            console.log("hi")
+            audioWorkletNode.port.postMessage({type: 'enabled', enabled: true});
+        }
+    }
+});
+
 // Initialize connection
 connect();
 
-// Cleanup on page unload
+// Also ensure cleanup on beforeunload
 window.addEventListener('beforeunload', function() {
+    console.log("unloading...")
     if (ws) {
         ws.close();
     }
     if (audioContext) {
         audioContext.close().catch(() => {});
     }
+    // release wake lock if held
+    releaseWakeLock();
 });

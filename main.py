@@ -95,6 +95,7 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str):
                 elif message["type"] == "transcript":
                     # Collect transcript text for summarization
                     transcript_buffer.append(message["text"])
+                    print("TXT: `", message["text"], "`")
 
                 elif message["type"] == "terminate":
                     # Send termination to AssemblyAI

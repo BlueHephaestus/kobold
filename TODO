@@ -33,6 +33,7 @@ Add keyterms_prompt for names of speakers?
     that the speaker names input on the frontend will even be the same as the character names, or might be abbreviated,
     I think this is a not-add-until-desired.
 Modularize script.js more
+Update to use formatted text for the transcript not the garbo we pipe into it - DONE
 
 
 
